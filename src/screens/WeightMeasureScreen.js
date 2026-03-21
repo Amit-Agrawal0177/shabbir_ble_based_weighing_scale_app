@@ -50,19 +50,63 @@ const WeightScreen = ({ route, navigation }) => {
       const dev = await manager.connectToDevice(deviceId);
       await dev.discoverAllServicesAndCharacteristics();
       setConnected(true);
+
+      const services = await dev.services();
+      console.log("📋 Available services:", services.map(s => s.uuid));
+
+      const SYSTEM_SERVICES = [
+        "00001800-0000-1000-8000-00805f9b34fb",
+        "00001801-0000-1000-8000-00805f9b34fb",
+      ];
+
+      let notifyChar = null;
+      let notifyServiceUUID = null;
+
+      for (const service of services) {
+        if (SYSTEM_SERVICES.includes(service.uuid.toLowerCase())) {
+          console.log(`⏭️ Skipping system service: ${service.uuid}`);
+          continue;
+        }
+
+        const chars = await dev.characteristicsForService(service.uuid);
+        console.log(`Service ${service.uuid} characteristics:`);
+        chars.forEach(c =>
+          console.log(`  CHAR: ${c.uuid} | notify:${c.isNotifiable} | indicate:${c.isIndicatable} | read:${c.isReadable}`)
+        );
+
+        const found = chars.find(c => c.isNotifiable || c.isIndicatable);
+        if (found) {
+          notifyChar = found;
+          notifyServiceUUID = service.uuid;
+          console.log(`✅ Using service: ${service.uuid}`);
+          console.log(`✅ Using char:    ${found.uuid}`);
+          break;
+        }
+      }
+
+      if (!notifyChar) {
+        console.log("❌ No notifiable characteristic found in app services");
+        setConnected(false);
+        return;
+      }
+
       dev.monitorCharacteristicForService(
-        UART_SERVICE_UUID,
-        UART_RX_CHAR_UUID,
+        notifyServiceUUID,
+        notifyChar.uuid,
         (error, characteristic) => {
           if (error) {
             console.log("BLE Error:", error);
             setConnected(false);
             return;
           }
-          const decoded = base64.decode(characteristic.value);
-          setWeight(decoded);
+          if (characteristic?.value) {
+            const decoded = base64.decode(characteristic.value);
+            console.log("📦 Data received:", decoded);
+            setWeight(decoded.trim());
+          }
         }
       );
+
     } catch (error) {
       console.log("Connection Error:", error);
       setConnected(false);
