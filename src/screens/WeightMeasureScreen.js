@@ -9,6 +9,7 @@ import {
   Modal,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -17,39 +18,260 @@ import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import LinearGradient from "react-native-linear-gradient";
 import { Dropdown } from "react-native-element-dropdown";
 
+const BASE_URL = "http://10.121.225.21:30119";
+
 const WeightScreen = ({ route, navigation }) => {
   const { device } = route.params;
-
   const deviceAddress = device.address || device.id;
   const deviceName = device.name || deviceAddress;
 
-  const [grossWeight, setGrossWeight] = useState(0);      // raw from scale
-  const [tareWeight, setTareWeight] = useState(0);         // captured tare
-  const [items, setItems] = useState([]);
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [newItem, setNewItem] = useState("");
-  const [records, setRecords] = useState([]);
+  // ── Auth / Store ──
+  const [authToken, setAuthToken] = useState("");
+  const [storeId, setStoreId] = useState("");
+
+  // ── BT ──
+  const [grossWeight, setGrossWeight] = useState(0);
+  const [tareWeight, setTareWeight] = useState(0);
   const [connected, setConnected] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [tareCaptured, setTareCaptured] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // ── Items dropdown ──
+  const [items, setItems] = useState([]);
+  const [selectedItem, setSelectedItem] = useState(null); // { id, item_name, item_code }
+  const [loadingItems, setLoadingItems] = useState(false);
+
+  // ── Add Item modal ──
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemCode, setNewItemCode] = useState("");
+  const [addingItem, setAddingItem] = useState(false);
+
+  // ── Scrap users dropdown ──
+  const [scrapUsers, setScrapUsers] = useState([]);
+  const [selectedScrapUser, setSelectedScrapUser] = useState(null); // { id, user_name, user_email }
+  const [loadingScrapUsers, setLoadingScrapUsers] = useState(false);
+
+  // ── Add Scrap User modal ──
+  const [showAddScrapModal, setShowAddScrapModal] = useState(false);
+  const [newScrapName, setNewScrapName] = useState("");
+  const [newScrapEmail, setNewScrapEmail] = useState("");
+  const [addingScrap, setAddingScrap] = useState(false);
+
+  // ── Records ──
+  const [records, setRecords] = useState([]);
+
+  // ── Upload modal (vehicle) ──
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [vehicleNumber, setVehicleNumber] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  // ── Logout modal ──
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const connectedDeviceRef = useRef(null);
   const readIntervalRef = useRef(null);
   const dataBufferRef = useRef("");
 
-  // net = gross - tare
   const netWeight = Math.max(0, grossWeight - tareWeight);
 
+  // ─────────────────────────────────────────────
   useEffect(() => {
-    loadItems();
+    loadUserData();
     loadRecords();
     connectClassic();
     return () => { cleanup(); };
   }, []);
 
+  // Load token + store_id from AsyncStorage
+  const loadUserData = async () => {
+    try {
+      const saved = await AsyncStorage.getItem("userDetails");
+      if (saved) {
+        const user = JSON.parse(saved);
+        const token = user.access_token || "";
+        const sid = String(user.store_id || "");
+        setAuthToken(token);
+        setStoreId(sid);
+        fetchItems(token, sid);
+        fetchScrapUsers(token, sid);
+      }
+    } catch (e) {
+      console.log("loadUserData error:", e);
+    }
+  };
+
+  // ── API: fetch items list ──
+  const fetchItems = async (token, sid) => {
+    setLoadingItems(true);
+    try {
+      const res = await fetch(`${BASE_URL}/item/listOfItems`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          Authorization: token,
+        },
+        body: JSON.stringify({ is_active: "Y", store_id: sid }),
+      }).then((r) => r.json());
+
+      if (res.statusCode === 0) {
+        setItems(res.op || []);
+      }
+    } catch (e) {
+      console.log("fetchItems error:", e);
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
+  // ── API: fetch scrap users list ──
+  const fetchScrapUsers = async (token, sid) => {
+    setLoadingScrapUsers(true);
+    try {
+      const res = await fetch(`${BASE_URL}/scrapUser/listOfScrapUser`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          Authorization: token,
+        },
+        body: JSON.stringify({ is_active: "Y", store_id: sid }),
+      }).then((r) => r.json());
+
+      if (res.statusCode === 0) {
+        setScrapUsers(res.op || []);
+      }
+    } catch (e) {
+      console.log("fetchScrapUsers error:", e);
+    } finally {
+      setLoadingScrapUsers(false);
+    }
+  };
+
+  // ── API: add item ──
+  const handleAddItem = async () => {
+    if (!newItemName.trim() || !newItemCode.trim()) {
+      Alert.alert("Missing Fields", "Please enter both item name and item code.");
+      return;
+    }
+    setAddingItem(true);
+    try {
+      const res = await fetch(`${BASE_URL}/item/insertItems`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          Authorization: authToken,
+        },
+        body: JSON.stringify({
+          item_name: newItemName.trim(),
+          item_code: newItemCode.trim(),
+          store_id: storeId,
+        }),
+      }).then((r) => r.json());
+
+      if (res.statusCode === 0) {
+        setNewItemName("");
+        setNewItemCode("");
+        setShowAddItemModal(false);
+        fetchItems(authToken, storeId);
+      } else {
+        Alert.alert("Error", res.msg || "Failed to add item.");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Network error. Please try again.");
+    } finally {
+      setAddingItem(false);
+    }
+  };
+
+  // ── API: add scrap user ──
+  const handleAddScrapUser = async () => {
+    if (!newScrapName.trim() || !newScrapEmail.trim()) {
+      Alert.alert("Missing Fields", "Please enter both name and email.");
+      return;
+    }
+    setAddingScrap(true);
+    try {
+      const res = await fetch(`${BASE_URL}/scrapUser/insertScrapUserDetails`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          Authorization: authToken,
+        },
+        body: JSON.stringify({
+          store_id: storeId,
+          user_name: newScrapName.trim(),
+          user_email: newScrapEmail.trim(),
+        }),
+      }).then((r) => r.json());
+
+      if (res.statusCode === 0) {
+        setNewScrapName("");
+        setNewScrapEmail("");
+        setShowAddScrapModal(false);
+        fetchScrapUsers(authToken, storeId);
+      } else {
+        Alert.alert("Error", res.msg || "Failed to add scrap department.");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Network error. Please try again.");
+    } finally {
+      setAddingScrap(false);
+    }
+  };
+
+  // ── API: upload bill ──
+  const handleUpload = async () => {
+    if (!vehicleNumber.trim()) {
+      Alert.alert("Missing", "Please enter a vehicle number.");
+      return;
+    }
+    if (!selectedScrapUser) {
+      Alert.alert("Missing", "Please select a scrap department.");
+      return;
+    }
+    if (records.length === 0) {
+      Alert.alert("No Data", "No records to upload.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const res = await fetch(`${BASE_URL}/bill/insertBills`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          accept: "application/json",
+          Authorization: authToken,
+        },
+        body: JSON.stringify({
+          store_id: storeId,
+          item_json: JSON.stringify(records),
+          vehicle_number: vehicleNumber.trim(),
+          scrap_user_id: String(selectedScrapUser.id),
+        }),
+      }).then((r) => r.json());
+
+      if (res.statusCode === 0) {
+        await AsyncStorage.removeItem("records");
+        setRecords([]);
+        setVehicleNumber("");
+        setShowUploadModal(false);
+        Alert.alert("Success", "Records uploaded successfully!");
+      } else {
+        Alert.alert("Upload Failed", res.msg || "Please try again.");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Network error. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ── BT Helpers ──
   const cleanup = async () => {
     try {
       if (readIntervalRef.current) {
@@ -60,21 +282,16 @@ const WeightScreen = ({ route, navigation }) => {
         await connectedDeviceRef.current.disconnect();
         connectedDeviceRef.current = null;
       }
-    } catch (e) {
-      console.log("Cleanup error:", e);
-    }
+    } catch (e) {}
   };
 
   const connectClassic = async () => {
     try {
       setConnecting(true);
       setConnected(false);
-
       try {
         const alreadyConnected = await RNBluetoothClassic.isDeviceConnected(deviceAddress);
-        if (alreadyConnected) {
-          await RNBluetoothClassic.disconnectFromDevice(deviceAddress);
-        }
+        if (alreadyConnected) await RNBluetoothClassic.disconnectFromDevice(deviceAddress);
       } catch (e) {}
 
       const connectedDevice = await RNBluetoothClassic.connectToDevice(deviceAddress);
@@ -90,22 +307,17 @@ const WeightScreen = ({ route, navigation }) => {
             if (data) processIncomingData(data);
           }
         } catch (readErr) {
-          console.log("Read error:", readErr);
           setConnected(false);
           clearInterval(readIntervalRef.current);
         }
       }, 1);
-
     } catch (error) {
       setConnected(false);
       setConnecting(false);
       Alert.alert(
         "Connection Failed",
-        `Could not connect to ${deviceName}.\n\nMake sure the device is:\n• Powered on\n• Within range\n• Paired in Android Settings`,
-        [
-          { text: "Retry", onPress: connectClassic },
-          { text: "Cancel", style: "cancel" },
-        ]
+        `Could not connect to ${deviceName}.`,
+        [{ text: "Retry", onPress: connectClassic }, { text: "Cancel", style: "cancel" }]
       );
     }
   };
@@ -114,78 +326,43 @@ const WeightScreen = ({ route, navigation }) => {
     dataBufferRef.current += rawData;
     const lines = dataBufferRef.current.split(/[\r\n]+/);
     dataBufferRef.current = lines.pop() || "";
-
     lines.forEach((line) => {
       const trimmed = line.trim();
       if (!trimmed) return;
       const match = trimmed.match(/[+-]?(\d+\.?\d*)/);
       if (match) {
         const parsed = parseFloat(match[0]);
-        if (!isNaN(parsed)) {
-          setGrossWeight(parsed);
-        }
+        if (!isNaN(parsed)) setGrossWeight(parsed);
       }
     });
   };
 
-  // ── TARE ──
   const captureTare = () => {
-    if (grossWeight === 0) {
-      Alert.alert("No Weight", "Place the container on the scale first.");
-      return;
-    }
+    if (grossWeight === 0) { Alert.alert("No Weight", "Place the container on the scale first."); return; }
     setTareWeight(grossWeight);
     setTareCaptured(true);
   };
 
-  const clearTare = () => {
-    setTareWeight(0);
-    setTareCaptured(false);
-  };
-
-  const loadItems = async () => {
-    const data = await AsyncStorage.getItem("items");
-    if (data) setItems(JSON.parse(data));
-  };
+  const clearTare = () => { setTareWeight(0); setTareCaptured(false); };
 
   const loadRecords = async () => {
     const data = await AsyncStorage.getItem("records");
     if (data) setRecords(JSON.parse(data));
   };
 
-  const saveItems = async (list) => {
-    setItems(list);
-    await AsyncStorage.setItem("items", JSON.stringify(list));
-  };
-
-  const addItem = () => {
-    if (!newItem.trim()) return;
-    const updated = [...items, newItem.trim()];
-    saveItems(updated);
-    setNewItem("");
-  };
-
-  const deleteItem = (index) => {
-    const updated = items.filter((_, i) => i !== index);
-    saveItems(updated);
-    if (selectedItem === items[index]) setSelectedItem(null);
-  };
-
   const saveWeight = async () => {
     if (!selectedItem) return;
     const record = {
       id: Date.now().toString(),
-      item: selectedItem,
+      item: selectedItem.item_name,
+      item_id: selectedItem.id,
+      item_code: selectedItem.item_code,
       grossWeight: grossWeight.toFixed(3),
       tareWeight: tareWeight.toFixed(3),
       netWeight: netWeight.toFixed(3),
-      // keep weight field for backward compat with server
       weight: netWeight.toFixed(3),
       device: deviceAddress,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
     const updated = [record, ...records];
     setRecords(updated);
@@ -206,149 +383,28 @@ const WeightScreen = ({ route, navigation }) => {
     navigation.replace("Login");
   };
 
-  const getCurrentDate = () => {
-    const now = new Date();
-
-    const day = String(now.getDate()).padStart(2, "0");
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const year = now.getFullYear();
-
-    return `${day}-${month}-${year}`;
-  };
-
-  const formatPrintData = (records) => {
-    if (!records || records.length === 0) return "";
-
-    const WIDTH = 32;
-
-    // helper: fixed width text
-    const fix = (text, len) => {
-      return String(text || "")
-        .substring(0, len)
-        .padEnd(len, " ");
-    };
-
-    // helper: center text
-    const center = (text) => {
-      const space = Math.max(0, Math.floor((WIDTH - text.length) / 2));
-      return " ".repeat(space) + text + "\n";
-    };
-
-    // Sort by time (important)
-    const sorted = [...records].sort((a, b) => {
-      return new Date(`1970/01/01 ${a.time}`) - new Date(`1970/01/01 ${b.time}`);
-    });
-
-    const endTime = sorted[0]?.time || "--";
-    const startTime = sorted[sorted.length - 1]?.time || "--";
-    const device = sorted[0]?.device || "NA";
-
-    let output = "";
-
-    // Header
-    output += center("WEIGHT REPORT");
-    output += "-".repeat(WIDTH) + "\n";
-
-    output += `Date: ${getCurrentDate()}\n`;
-    output += fix("Machine:", 12) + fix("1", 20) + "\n";
-    // output += fix("Device:", 12) + fix(device, 20) + "\n";
-    output += fix("Start:", 12) + fix(startTime, 20) + "\n";
-    output += fix("End:", 12) + fix(endTime, 20) + "\n";
-
-    output += "-".repeat(WIDTH) + "\n";
-
-    // Column widths (total = 32)
-    // Sr(3) + Item(7) + Net(6) + Tare(6) + Gross(10) = 32
-    output +=
-      fix("Sr", 3) +
-      fix("Item", 7) +
-      fix("Net", 7) +
-      fix("Tare", 7) +
-      fix("Gross", 8) +
-      "\n";
-
-    output += "-".repeat(WIDTH) + "\n";
-
-    let totalWeight = 0;
-
-    sorted.forEach((r, index) => {
-      const sr = fix(index + 1, 3);
-      const item = fix(r.item, 7);
-      const netVal = parseFloat(r.netWeight || r.weight || 0);
-      const tareVal = r.tareWeight || "0";
-      const grossVal = r.grossWeight || r.weight || "0";
-
-      totalWeight += netVal;
-
-      const net = fix(netVal.toFixed(3), 7);
-      const tare = fix(tareVal, 7);
-      const gross = fix(grossVal, 8);
-
-      output += sr + item + net + tare + gross + "\n";
-    });
-
-    output += "-".repeat(WIDTH) + "\n";
-
-    output += fix("Items:", 12) + fix(records.length, 20) + "\n";
-    output += fix("Total Net:", 12) + fix(totalWeight.toFixed(3) + "kg", 20) + "\n";
-
-    output += "-".repeat(WIDTH) + "\n\n\n";
-
-    return output;
-  };
-
-  const printRecords = async () => {
-    try {
-      if (records.length === 0) {
-        Alert.alert("No Data", "No records to print.");
-        return;
-      }
-      if (!connected || !connectedDeviceRef.current) {
-        Alert.alert("Not Connected", "Please connect to BT-01 first.");
-        return;
-      }
-      let x = formatPrintData(records);
-      await connectedDeviceRef.current.write("\r\n" + x + "\r\n");
-      Alert.alert("Sent!", "Records transmitted to BT-01 successfully.");
-    } catch (error) {
-      console.log("Print/send error:", error);
-      Alert.alert("Error", "Failed to send data over Bluetooth.");
-    }
-  };
-
-  const syncToServer = async () => {
-    try {
-      if (records.length === 0) return;
-      const response = await fetch(
-        "https://tmmapi.9930i.com/sendWeighingScaleDataOnEmail",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceId: 1, data: records }),
-        }
-      );
-      if (response.ok) {
-        await printRecords();
-        await AsyncStorage.removeItem("records");
-        setRecords([]);
-      }
-    } catch (error) {
-      console.log("Sync error:", error);
-    }
-  };
-
-  const CumulativeWeight = (product) => {
-    const total = records.reduce((acc, item) => {
-      if (item.item === product) return acc + parseFloat(item.netWeight || item.weight || 0);
+  const CumulativeWeight = (itemName) => {
+    const total = records.reduce((acc, r) => {
+      if (r.item === itemName) return acc + parseFloat(r.netWeight || r.weight || 0);
       return acc;
     }, 0);
     return total.toFixed(1);
   };
 
-  const shortDeviceId =
-    deviceAddress.length > 17
-      ? deviceAddress.substring(0, 17) + "…"
-      : deviceAddress;
+  const shortDeviceId = deviceAddress.length > 17 ? deviceAddress.substring(0, 17) + "…" : deviceAddress;
+
+  // Dropdown data
+  const itemDropdownData = items.map((i) => ({
+    label: `${i.item_name} (${i.item_code})`,
+    value: i.id,
+    raw: i,
+  }));
+
+  const scrapDropdownData = scrapUsers.map((u) => ({
+    label: u.user_name,
+    value: u.id,
+    raw: u,
+  }));
 
   return (
     <View style={styles.container}>
@@ -360,12 +416,7 @@ const WeightScreen = ({ route, navigation }) => {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.logoShadow}>
-            <LinearGradient
-              colors={["#1d4ed8", "#2563eb"]}
-              style={styles.logoGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
+            <LinearGradient colors={["#1d4ed8", "#2563eb"]} style={styles.logoGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
               <Icon name="scale-balance" size={20} color="#fff" />
             </LinearGradient>
           </View>
@@ -374,23 +425,11 @@ const WeightScreen = ({ route, navigation }) => {
             <Text style={styles.headerSub}>Bluetooth Weighing System</Text>
           </View>
         </View>
-
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={connectClassic}
-            disabled={connecting}
-            style={styles.iconBtn}
-          >
-            <Icon
-              name={connecting ? "bluetooth-settings" : connected ? "bluetooth-connect" : "bluetooth-off"}
-              size={19}
-              color={connecting ? "#f59e0b" : connected ? "#22c55e" : "#94a3b8"}
-            />
+          <TouchableOpacity onPress={connectClassic} disabled={connecting} style={styles.iconBtn}>
+            <Icon name={connecting ? "bluetooth-settings" : connected ? "bluetooth-connect" : "bluetooth-off"} size={19} color={connecting ? "#f59e0b" : connected ? "#22c55e" : "#94a3b8"} />
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setShowLogoutModal(true)}
-            style={[styles.iconBtn, styles.logoutIconBtn]}
-          >
+          <TouchableOpacity onPress={() => setShowLogoutModal(true)} style={[styles.iconBtn, styles.logoutIconBtn]}>
             <Icon name="logout" size={19} color="#ef4444" />
           </TouchableOpacity>
         </View>
@@ -408,35 +447,73 @@ const WeightScreen = ({ route, navigation }) => {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
-        {/* DROPDOWN + TOTAL */}
-        <View style={{ marginBottom: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ width: "48%" }}>
+        {/* ── ITEM DROPDOWN ROW ── */}
+        <View style={styles.dropRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.dropLabel}>ITEM</Text>
+            <View style={styles.dropWithBtn}>
+              <Dropdown
+                style={styles.dropdown}
+                containerStyle={styles.dropdownContainer}
+                itemTextStyle={styles.itemText}
+                selectedTextStyle={styles.selectedText}
+                placeholderStyle={styles.placeholder}
+                data={itemDropdownData}
+                labelField="label"
+                valueField="value"
+                placeholder={loadingItems ? "Loading…" : "Select Item"}
+                value={selectedItem?.id ?? null}
+                onChange={(item) => setSelectedItem(item.raw)}
+                renderRightIcon={() =>
+                  loadingItems ? <ActivityIndicator size="small" color="#2563eb" style={{ marginRight: 8 }} /> : undefined
+                }
+              />
+              <TouchableOpacity onPress={() => setShowAddItemModal(true)} style={styles.addIconBtn}>
+                <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.addIconBtnGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  <Icon name="plus" size={16} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {selectedItem && (
+            <View style={styles.totalCard}>
+              <Text style={styles.totalLabel}>{selectedItem.item_name}</Text>
+              <Text style={styles.totalValue}>{CumulativeWeight(selectedItem.item_name)} kg</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ── SCRAP DEPARTMENT DROPDOWN ROW ── */}
+        <View style={styles.dropRowSingle}>
+          <Text style={styles.dropLabel}>SCRAP DEPARTMENT</Text>
+          <View style={styles.dropWithBtn}>
             <Dropdown
-              style={{ height: 40, borderRadius: 10, backgroundColor: "#fff", paddingHorizontal: 10 }}
+              style={styles.dropdown}
               containerStyle={styles.dropdownContainer}
               itemTextStyle={styles.itemText}
               selectedTextStyle={styles.selectedText}
               placeholderStyle={styles.placeholder}
-              data={items.map((item) => ({ label: item, value: item }))}
+              data={scrapDropdownData}
               labelField="label"
               valueField="value"
-              placeholder="Select Item"
-              value={selectedItem}
-              onChange={(item) => setSelectedItem(item.value)}
+              placeholder={loadingScrapUsers ? "Loading…" : "Select Department"}
+              value={selectedScrapUser?.id ?? null}
+              onChange={(item) => setSelectedScrapUser(item.raw)}
+              renderRightIcon={() =>
+                loadingScrapUsers ? <ActivityIndicator size="small" color="#2563eb" style={{ marginRight: 8 }} /> : undefined
+              }
             />
-          </View>
-          <View style={styles.totalCard}>
-            <Text style={styles.totalLabel}>Total {selectedItem || "Item"}</Text>
-            <Text style={styles.totalValue}>
-              {selectedItem ? `${CumulativeWeight(selectedItem)} kg` : "--"}
-            </Text>
+            <TouchableOpacity onPress={() => setShowAddScrapModal(true)} style={styles.addIconBtn}>
+              <LinearGradient colors={["#7c3aed", "#6d28d9"]} style={styles.addIconBtnGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                <Icon name="plus" size={16} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* ── WEIGHT CARD ── */}
         <View style={styles.weightCard}>
-
-          {/* TOP ROW */}
           <View style={styles.weightCardTop}>
             <Text style={styles.weightLabel}>Weight Display</Text>
             <View style={styles.livePill}>
@@ -447,64 +524,36 @@ const WeightScreen = ({ route, navigation }) => {
             </View>
           </View>
 
-          {/* GROSS / TARE / NET ROW */}
           <View style={styles.weightStatsRow}>
-
-            {/* GROSS */}
             <View style={styles.weightStatBox}>
               <Text style={styles.weightStatBoxLabel}>GROSS</Text>
               <Text style={styles.weightStatBoxValue}>{grossWeight.toFixed(3)}</Text>
               <Text style={styles.weightStatBoxUnit}>kg</Text>
             </View>
-
             <View style={styles.weightStatDividerV} />
-
-            {/* TARE */}
             <View style={styles.weightStatBox}>
               <Text style={styles.weightStatBoxLabel}>TARE</Text>
-              <Text style={[styles.weightStatBoxValue, { color: "#f59e0b" }]}>
-                {tareWeight.toFixed(3)}
-              </Text>
+              <Text style={[styles.weightStatBoxValue, { color: "#f59e0b" }]}>{tareWeight.toFixed(3)}</Text>
               <Text style={styles.weightStatBoxUnit}>kg</Text>
             </View>
-
             <View style={styles.weightStatDividerV} />
-
-            {/* NET */}
             <View style={styles.weightStatBox}>
               <Text style={styles.weightStatBoxLabel}>NET</Text>
-              <Text style={[styles.weightStatBoxValue, { color: "#16a34a" }]}>
-                {netWeight.toFixed(3)}
-              </Text>
+              <Text style={[styles.weightStatBoxValue, { color: "#16a34a" }]}>{netWeight.toFixed(3)}</Text>
               <Text style={styles.weightStatBoxUnit}>kg</Text>
             </View>
-
           </View>
 
-          {/* BIG NET DISPLAY */}
           <Text style={styles.weightValue}>{netWeight.toFixed(3)}</Text>
           <Text style={styles.weightUnit}>net kilograms</Text>
 
-          {/* TARE BUTTONS */}
           <View style={styles.tareRow}>
-            <TouchableOpacity
-              onPress={captureTare}
-              activeOpacity={0.85}
-              style={{ flex: 1 }}
-            >
-              <LinearGradient
-                colors={tareCaptured ? ["#f59e0b", "#d97706"] : ["#1d4ed8", "#2563eb"]}
-                style={styles.tareBtn}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
+            <TouchableOpacity onPress={captureTare} activeOpacity={0.85} style={{ flex: 1 }}>
+              <LinearGradient colors={tareCaptured ? ["#f59e0b", "#d97706"] : ["#1d4ed8", "#2563eb"]} style={styles.tareBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                 <Icon name="scale" size={16} color="#fff" />
-                <Text style={styles.tareBtnText}>
-                  {tareCaptured ? `Tare: ${tareWeight.toFixed(3)} kg` : "Set Tare"}
-                </Text>
+                <Text style={styles.tareBtnText}>{tareCaptured ? `Tare: ${tareWeight.toFixed(3)} kg` : "Set Tare"}</Text>
               </LinearGradient>
             </TouchableOpacity>
-
             {tareCaptured && (
               <TouchableOpacity onPress={clearTare} style={styles.clearTareBtn}>
                 <Icon name="close-circle" size={16} color="#ef4444" />
@@ -513,7 +562,6 @@ const WeightScreen = ({ route, navigation }) => {
             )}
           </View>
 
-          {/* SAVE BUTTON */}
           <View style={styles.weightCardBottom}>
             <View style={styles.weightStat}>
               <Icon name="clock-outline" size={13} color="#94a3b8" />
@@ -522,68 +570,23 @@ const WeightScreen = ({ route, navigation }) => {
             <View style={styles.weightStatDivider} />
             <TouchableOpacity onPress={saveWeight} disabled={!selectedItem} activeOpacity={0.85}>
               <LinearGradient
-                colors={
-                  saveSuccess
-                    ? ["#16a34a", "#15803d"]
-                    : selectedItem
-                    ? ["#1d4ed8", "#2563eb", "#3b82f6"]
-                    : ["#e2e8f0", "#e2e8f0"]
-                }
+                colors={saveSuccess ? ["#16a34a", "#15803d"] : selectedItem ? ["#1d4ed8", "#2563eb", "#3b82f6"] : ["#e2e8f0", "#e2e8f0"]}
                 style={styles.saveBtn}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
               >
-                <Icon
-                  name={saveSuccess ? "check-circle" : "content-save-outline"}
-                  size={20}
-                  color={selectedItem ? "#fff" : "#94a3b8"}
-                />
+                <Icon name={saveSuccess ? "check-circle" : "content-save-outline"} size={20} color={selectedItem ? "#fff" : "#94a3b8"} />
                 <Text style={[styles.saveBtnText, !selectedItem && styles.saveBtnTextDisabled]}>
                   {saveSuccess ? "Saved!" : "Save Weight"}
                 </Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
-
         </View>
 
-        {!selectedItem && (
-          <Text style={styles.saveHint}>Select an item above to enable saving</Text>
-        )}
+        {!selectedItem && <Text style={styles.saveHint}>Select an item above to enable saving</Text>}
 
-        {/* ADD ITEM */}
-        <View style={[styles.addRow, inputFocused && styles.addRowFocused]}>
-          <Icon
-            name="tag-plus-outline"
-            size={18}
-            color={inputFocused ? "#2563eb" : "#94a3b8"}
-            style={{ marginLeft: 12 }}
-          />
-          <TextInput
-            placeholder="Add item name…"
-            placeholderTextColor="#cbd5e1"
-            style={styles.addInput}
-            value={newItem}
-            onChangeText={setNewItem}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            onSubmitEditing={addItem}
-            returnKeyType="done"
-          />
-          <TouchableOpacity onPress={addItem} style={styles.addBtn}>
-            <LinearGradient
-              colors={["#16a34a", "#15803d"]}
-              style={styles.addBtnGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              <Icon name="plus" size={18} color="#fff" />
-              <Text style={styles.addBtnText}>Add</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-
-        {/* RECORDS HEADER */}
+        {/* RECORDS HEADER + UPLOAD */}
         <View style={styles.sectionRow}>
           <Text style={styles.sectionLabel}>SAVED MEASUREMENTS</Text>
           <View style={styles.recordCountBadge}>
@@ -591,15 +594,9 @@ const WeightScreen = ({ route, navigation }) => {
           </View>
         </View>
 
-        {/* UPLOAD + PRINT */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.actionBtnWrap} onPress={syncToServer}>
-            <LinearGradient
-              colors={["#2563eb", "#1e40af"]}
-              style={styles.actionBtn}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
+          <TouchableOpacity style={styles.actionBtnWrap} onPress={() => setShowUploadModal(true)}>
+            <LinearGradient colors={["#2563eb", "#1e40af"]} style={styles.actionBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
               <Icon name="cloud-upload-outline" size={19} color="#fff" />
               <Text style={styles.actionBtnText}>Upload Now</Text>
             </LinearGradient>
@@ -620,70 +617,215 @@ const WeightScreen = ({ route, navigation }) => {
                   <Icon name="scale" size={18} color="#2563eb" />
                 </LinearGradient>
               </View>
-
               <View style={styles.recordInfo}>
                 <Text style={styles.recordItem}>{record.item}</Text>
-                {/* Gross / Tare / Net mini row */}
                 <View style={styles.recordWeightRow}>
-                  <Text style={styles.recordWeightTag}>
-                    G <Text style={styles.recordWeightTagVal}>{record.grossWeight || record.weight} kg</Text>
-                  </Text>
+                  <Text style={styles.recordWeightTag}>G <Text style={styles.recordWeightTagVal}>{record.grossWeight || record.weight} kg</Text></Text>
                   <Text style={styles.recordWeightTagDivider}>·</Text>
-                  <Text style={[styles.recordWeightTag, { color: "#f59e0b" }]}>
-                    T <Text style={styles.recordWeightTagVal}>{record.tareWeight || "0.000"} kg</Text>
-                  </Text>
+                  <Text style={[styles.recordWeightTag, { color: "#f59e0b" }]}>T <Text style={styles.recordWeightTagVal}>{record.tareWeight || "0.000"} kg</Text></Text>
                   <Text style={styles.recordWeightTagDivider}>·</Text>
-                  <Text style={[styles.recordWeightTag, { color: "#16a34a" }]}>
-                    N <Text style={styles.recordWeightTagVal}>{record.netWeight || record.weight} kg</Text>
-                  </Text>
+                  <Text style={[styles.recordWeightTag, { color: "#16a34a" }]}>N <Text style={styles.recordWeightTagVal}>{record.netWeight || record.weight} kg</Text></Text>
                 </View>
-                {record.time && (
-                  <Text style={styles.recordTime}>
-                    <Icon name="clock-outline" size={10} color="#94a3b8" /> {record.time}
-                  </Text>
-                )}
+                {record.time && <Text style={styles.recordTime}><Icon name="clock-outline" size={10} color="#94a3b8" /> {record.time}</Text>}
               </View>
-
               <TouchableOpacity onPress={() => deleteRecord(record.id)} style={styles.deleteBtn}>
                 <Icon name="trash-can-outline" size={15} color="#ef4444" />
               </TouchableOpacity>
             </View>
           ))
         )}
-
         <View style={{ height: 20 }} />
       </ScrollView>
 
+      {/* ── ADD ITEM MODAL ── */}
+      <Modal visible={showAddItemModal} transparent animationType="slide" onRequestClose={() => setShowAddItemModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={[styles.modalIconCircle, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0" }]}>
+              <Icon name="tag-plus-outline" size={28} color="#16a34a" />
+            </View>
+            <Text style={styles.modalTitle}>Add Item</Text>
+            <Text style={styles.modalSubtitle}>Enter the item details to add it to the list.</Text>
+            <View style={styles.modalDivider} />
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalFieldLabel}>ITEM NAME</Text>
+              <View style={styles.modalInputWrap}>
+                <Icon name="package-variant-closed" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. Apple"
+                  placeholderTextColor="#cbd5e1"
+                  value={newItemName}
+                  onChangeText={setNewItemName}
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalFieldLabel}>ITEM CODE</Text>
+              <View style={styles.modalInputWrap}>
+                <Icon name="barcode" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. I001"
+                  placeholderTextColor="#cbd5e1"
+                  value={newItemCode}
+                  onChangeText={setNewItemCode}
+                  autoCapitalize="characters"
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={() => { setShowAddItemModal(false); setNewItemName(""); setNewItemCode(""); }} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleAddItem} disabled={addingItem} style={styles.confirmBtnWrap} activeOpacity={0.85}>
+                <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  {addingItem ? <ActivityIndicator color="#fff" size="small" /> : <>
+                    <Icon name="check" size={16} color="#fff" />
+                    <Text style={styles.confirmBtnText}>Add Item</Text>
+                  </>}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── ADD SCRAP USER MODAL ── */}
+      <Modal visible={showAddScrapModal} transparent animationType="slide" onRequestClose={() => setShowAddScrapModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={[styles.modalIconCircle, { backgroundColor: "#f5f3ff", borderColor: "#ddd6fe" }]}>
+              <Icon name="domain-plus" size={28} color="#7c3aed" />
+            </View>
+            <Text style={styles.modalTitle}>Add Scrap Department</Text>
+            <Text style={styles.modalSubtitle}>Enter department name and email address.</Text>
+            <View style={styles.modalDivider} />
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalFieldLabel}>DEPARTMENT NAME</Text>
+              <View style={styles.modalInputWrap}>
+                <Icon name="office-building-outline" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. Scrap Dept A"
+                  placeholderTextColor="#cbd5e1"
+                  value={newScrapName}
+                  onChangeText={setNewScrapName}
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalFieldLabel}>EMAIL</Text>
+              <View style={styles.modalInputWrap}>
+                <Icon name="email-outline" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. dept@example.com"
+                  placeholderTextColor="#cbd5e1"
+                  value={newScrapEmail}
+                  onChangeText={setNewScrapEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={() => { setShowAddScrapModal(false); setNewScrapName(""); setNewScrapEmail(""); }} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleAddScrapUser} disabled={addingScrap} style={styles.confirmBtnWrap} activeOpacity={0.85}>
+                <LinearGradient colors={["#7c3aed", "#6d28d9"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  {addingScrap ? <ActivityIndicator color="#fff" size="small" /> : <>
+                    <Icon name="check" size={16} color="#fff" />
+                    <Text style={styles.confirmBtnText}>Add Dept</Text>
+                  </>}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── UPLOAD MODAL (vehicle number) ── */}
+      <Modal visible={showUploadModal} transparent animationType="slide" onRequestClose={() => setShowUploadModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={[styles.modalIconCircle, { backgroundColor: "#eff6ff", borderColor: "#bfdbfe" }]}>
+              <Icon name="truck-outline" size={28} color="#2563eb" />
+            </View>
+            <Text style={styles.modalTitle}>Upload Records</Text>
+            <Text style={styles.modalSubtitle}>Enter the vehicle number before submitting all records.</Text>
+            <View style={styles.modalDivider} />
+
+            <View style={styles.modalField}>
+              <Text style={styles.modalFieldLabel}>VEHICLE NUMBER</Text>
+              <View style={styles.modalInputWrap}>
+                <Icon name="car-outline" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g. MP40MQ2380"
+                  placeholderTextColor="#cbd5e1"
+                  value={vehicleNumber}
+                  onChangeText={setVehicleNumber}
+                  autoCapitalize="characters"
+                />
+              </View>
+            </View>
+
+            <View style={styles.uploadSummary}>
+              <View style={styles.uploadSummaryRow}>
+                <Icon name="database-outline" size={14} color="#64748b" />
+                <Text style={styles.uploadSummaryText}>{records.length} records to upload</Text>
+              </View>
+              {selectedScrapUser && (
+                <View style={styles.uploadSummaryRow}>
+                  <Icon name="domain" size={14} color="#64748b" />
+                  <Text style={styles.uploadSummaryText}>Dept: {selectedScrapUser.user_name}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity onPress={() => { setShowUploadModal(false); setVehicleNumber(""); }} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleUpload} disabled={uploading} style={styles.confirmBtnWrap} activeOpacity={0.85}>
+                <LinearGradient colors={["#2563eb", "#1e40af"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  {uploading ? <ActivityIndicator color="#fff" size="small" /> : <>
+                    <Icon name="cloud-upload-outline" size={16} color="#fff" />
+                    <Text style={styles.confirmBtnText}>Submit</Text>
+                  </>}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* LOGOUT MODAL */}
-      <Modal
-        visible={showLogoutModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLogoutModal(false)}
-      >
+      <Modal visible={showLogoutModal} transparent animationType="fade" onRequestClose={() => setShowLogoutModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalIconCircle}>
               <Icon name="logout" size={28} color="#ef4444" />
             </View>
             <Text style={styles.modalTitle}>Sign Out?</Text>
-            <Text style={styles.modalSubtitle}>
-              You'll be disconnected from the Weighing device and returned to the login screen.
-            </Text>
+            <Text style={styles.modalSubtitle}>You'll be disconnected from the weighing device and returned to the login screen.</Text>
             <View style={styles.modalDivider} />
             <View style={styles.modalActions}>
               <TouchableOpacity onPress={() => setShowLogoutModal(false)} style={styles.cancelBtn}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleLogout} style={styles.logoutBtnWrap} activeOpacity={0.85}>
-                <LinearGradient
-                  colors={["#ef4444", "#dc2626"]}
-                  style={styles.logoutBtn}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
+              <TouchableOpacity onPress={handleLogout} style={styles.confirmBtnWrap} activeOpacity={0.85}>
+                <LinearGradient colors={["#ef4444", "#dc2626"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                   <Icon name="logout" size={16} color="#fff" />
-                  <Text style={styles.logoutBtnText}>Sign Out</Text>
+                  <Text style={styles.confirmBtnText}>Sign Out</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -702,6 +844,7 @@ const styles = StyleSheet.create({
   decorCircleSmall: { position: "absolute", bottom: 80, left: -60, width: 160, height: 160, borderRadius: 80, backgroundColor: "#eff6ff", opacity: 0.9 },
   scroll: { paddingBottom: 30 },
 
+  // Header
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   logoShadow: { borderRadius: 14, shadowColor: "#2563eb", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 8 },
@@ -712,6 +855,7 @@ const styles = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 12, backgroundColor: "#eff6ff", borderWidth: 1.5, borderColor: "#bfdbfe", justifyContent: "center", alignItems: "center" },
   logoutIconBtn: { backgroundColor: "#fff1f2", borderColor: "#fecaca" },
 
+  // Device badge
   deviceBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 16, borderWidth: 1, borderColor: "#e2e8f0", gap: 6, shadowColor: "#1e3a8a", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
   deviceBadgeText: { flex: 1, fontSize: 12, color: "#475569", fontWeight: "500" },
   connDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#cbd5e1" },
@@ -719,11 +863,24 @@ const styles = StyleSheet.create({
   connLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8" },
   connLabelActive: { color: "#16a34a" },
 
-  totalCard: { backgroundColor: "#ffffff", padding: 10, borderRadius: 12, elevation: 3, alignItems: "center", flexDirection: "row", maxWidth: 200 },
-  totalLabel: { fontSize: 14, color: "#64748b" },
-  totalValue: { fontSize: 14, fontWeight: "bold", color: "#2563eb", marginLeft: 5 },
+  // Dropdown rows
+  dropRow: { flexDirection: "row", alignItems: "flex-end", gap: 10, marginBottom: 12 },
+  dropRowSingle: { marginBottom: 14 },
+  dropLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.8, marginBottom: 5 },
+  dropWithBtn: { flexDirection: "row", alignItems: "center", gap: 8 },
+  dropdown: { flex: 1, height: 44, borderRadius: 12, backgroundColor: "#fff", paddingHorizontal: 10, borderWidth: 1.5, borderColor: "#e2e8f0" },
+  dropdownContainer: { borderRadius: 12, backgroundColor: "#ffffff", elevation: 5 },
+  itemText: { fontSize: 13, color: "#1e293b", paddingVertical: 0 },
+  selectedText: { fontSize: 14, color: "#2563eb", fontWeight: "600" },
+  placeholder: { color: "#94a3b8", fontSize: 14 },
+  addIconBtn: { borderRadius: 10, overflow: "hidden" },
+  addIconBtnGradient: { width: 44, height: 44, justifyContent: "center", alignItems: "center", borderRadius: 10 },
 
-  /* Weight card */
+  totalCard: { backgroundColor: "#ffffff", padding: 10, borderRadius: 12, elevation: 3, alignItems: "center", minWidth: 110, borderWidth: 1, borderColor: "#e8f0fe" },
+  totalLabel: { fontSize: 11, color: "#64748b", fontWeight: "600" },
+  totalValue: { fontSize: 15, fontWeight: "bold", color: "#2563eb", marginTop: 2 },
+
+  // Weight card
   weightCard: { backgroundColor: "#fff", borderRadius: 22, padding: 14, marginBottom: 16, borderWidth: 1.5, borderColor: "#e8f0fe", shadowColor: "#1e3a8a", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 8 },
   weightCardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   weightLabel: { fontSize: 12, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.8, textTransform: "uppercase" },
@@ -733,7 +890,6 @@ const styles = StyleSheet.create({
   liveText: { fontSize: 11, fontWeight: "700", color: "#94a3b8" },
   liveTextActive: { color: "#16a34a" },
 
-  /* Gross/Tare/Net row */
   weightStatsRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#f8fafc", borderRadius: 14, paddingVertical: 12, marginBottom: 12, borderWidth: 1, borderColor: "#e2e8f0" },
   weightStatBox: { flex: 1, alignItems: "center" },
   weightStatBoxLabel: { fontSize: 10, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.8, marginBottom: 4 },
@@ -744,7 +900,6 @@ const styles = StyleSheet.create({
   weightValue: { fontSize: 52, fontWeight: "800", color: "#16a34a", letterSpacing: -2, textAlign: "center", marginVertical: 4 },
   weightUnit: { fontSize: 12, color: "#94a3b8", fontWeight: "500", textAlign: "center", marginBottom: 14, textTransform: "uppercase", letterSpacing: 1 },
 
-  /* Tare buttons */
   tareRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
   tareBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 11, borderRadius: 12 },
   tareBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
@@ -766,20 +921,11 @@ const styles = StyleSheet.create({
   recordCountBadge: { backgroundColor: "#eff6ff", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: "#bfdbfe" },
   recordCountText: { fontSize: 12, fontWeight: "700", color: "#2563eb" },
 
-  addRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 14, borderWidth: 1.5, borderColor: "#e2e8f0", overflow: "hidden", shadowColor: "#1e3a8a", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3, marginBottom: 16 },
-  addRowFocused: { borderColor: "#2563eb", shadowColor: "#2563eb", shadowOpacity: 0.15, elevation: 4 },
-  addInput: { flex: 1, paddingVertical: 13, paddingHorizontal: 10, fontSize: 14, color: "#0f172a", fontWeight: "500" },
-  addBtn: { borderRadius: 0, overflow: "hidden" },
-  addBtnGradient: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 16, paddingVertical: 13 },
-  addBtnText: { color: "#fff", fontWeight: "700", fontSize: 14 },
-
-  /* Action row (Upload + Print) */
   actionRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
   actionBtnWrap: { flex: 1, borderRadius: 14, overflow: "hidden" },
   actionBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 14 },
   actionBtnText: { color: "#fff", fontWeight: "bold", fontSize: 15 },
 
-  /* Record card */
   recordCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8, borderWidth: 1.5, borderColor: "#e8f0fe", shadowColor: "#1e3a8a", shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 3, gap: 12 },
   recordIconWrap: { borderRadius: 12, overflow: "hidden" },
   recordIconBg: { width: 42, height: 42, borderRadius: 12, justifyContent: "center", alignItems: "center" },
@@ -795,21 +941,27 @@ const styles = StyleSheet.create({
   emptyRecords: { alignItems: "center", paddingVertical: 30, gap: 8 },
   emptyRecordsText: { fontSize: 13, color: "#94a3b8", fontWeight: "500" },
 
-  modalOverlay: { flex: 1, backgroundColor: "rgba(15,23,42,0.45)", justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
+  // Modals
+  modalOverlay: { flex: 1, backgroundColor: "rgba(15,23,42,0.45)", justifyContent: "center", alignItems: "center", paddingHorizontal: 24 },
   modalCard: { backgroundColor: "#ffffff", borderRadius: 24, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22, width: "100%", alignItems: "center", shadowColor: "#0f172a", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 32, elevation: 20 },
   modalIconCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: "#fff1f2", borderWidth: 1.5, borderColor: "#fecaca", justifyContent: "center", alignItems: "center", marginBottom: 16 },
   modalTitle: { fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8, letterSpacing: -0.3 },
   modalSubtitle: { fontSize: 13, color: "#64748b", textAlign: "center", lineHeight: 20, marginBottom: 20 },
   modalDivider: { width: "100%", height: 1, backgroundColor: "#f1f5f9", marginBottom: 20 },
-  modalActions: { flexDirection: "row", gap: 12, width: "100%" },
+
+  modalField: { width: "100%", marginBottom: 14 },
+  modalFieldLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.8, marginBottom: 6 },
+  modalInputWrap: { flexDirection: "row", alignItems: "center", backgroundColor: "#f8fafc", borderRadius: 12, borderWidth: 1.5, borderColor: "#e2e8f0", height: 48 },
+  modalInput: { flex: 1, fontSize: 15, color: "#0f172a", fontWeight: "500", paddingHorizontal: 10 },
+
+  uploadSummary: { width: "100%", backgroundColor: "#f8fafc", borderRadius: 12, padding: 12, marginBottom: 16, gap: 6, borderWidth: 1, borderColor: "#e2e8f0" },
+  uploadSummaryRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  uploadSummaryText: { fontSize: 13, color: "#475569", fontWeight: "500" },
+
+  modalActions: { flexDirection: "row", gap: 12, width: "100%", marginTop: 4 },
   cancelBtn: { flex: 1, height: 48, borderRadius: 14, backgroundColor: "#f8fafc", borderWidth: 1.5, borderColor: "#e2e8f0", justifyContent: "center", alignItems: "center" },
   cancelBtnText: { fontSize: 15, fontWeight: "700", color: "#475569" },
-  logoutBtnWrap: { flex: 1, borderRadius: 14, shadowColor: "#ef4444", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 6 },
-  logoutBtn: { height: 48, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-  logoutBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
-
-  dropdownContainer: { borderRadius: 12, backgroundColor: "#ffffff", elevation: 5 },
-  itemText: { fontSize: 13, color: "#1e293b", paddingVertical: 0 },
-  selectedText: { fontSize: 15, color: "#2563eb", fontWeight: "600" },
-  placeholder: { color: "#94a3b8", fontSize: 15 },
+  confirmBtnWrap: { flex: 1, borderRadius: 14, shadowColor: "#2563eb", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 6 },
+  confirmBtn: { height: 48, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  confirmBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
 });
