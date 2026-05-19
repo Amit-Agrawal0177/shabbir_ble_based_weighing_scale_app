@@ -17,8 +17,9 @@ import RNBluetoothClassic from "react-native-bluetooth-classic";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import LinearGradient from "react-native-linear-gradient";
 import { Dropdown } from "react-native-element-dropdown";
+import { pick, types } from '@react-native-documents/picker';
 
-const BASE_URL = "http://10.121.225.21:30119";
+const BASE_URL = "https://bt.weightify.vendtrails.com";
 
 const WeightScreen = ({ route, navigation }) => {
   const { device } = route.params;
@@ -99,6 +100,53 @@ const WeightScreen = ({ route, navigation }) => {
       }
     } catch (e) {
       console.log("loadUserData error:", e);
+    }
+  };
+
+  const handleExcelBulkUpload = async () => {
+    try {
+      // Pick the document using the new library syntax
+      const response = await pick({
+        type: [types.xlsx],
+      });
+
+      // The new picker returns an array of selections
+      if (!response || response.length === 0) return;
+      const pickedFile = response[0];
+
+      const formData = new FormData();
+      formData.append("store_id", storeId);
+      formData.append("file", {
+        uri: pickedFile.uri,
+        name: pickedFile.name || "Item_Report.xlsx",
+        type: pickedFile.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      console.log("Uploading spreadsheet bulk data...");
+      const fetchResponse = await fetch(`${BASE_URL}/item/excelBulkUpload`, {
+        method: "POST",
+        headers: {
+          "accept": "application/json",
+          "Content-Type": "multipart/form-data",
+          "Authorization": authToken,
+        },
+        body: formData,
+      });
+
+      const result = await fetchResponse.json();
+      if (fetchResponse.ok && result.statusCode === 0) {
+        Alert.alert("Success", "Excel inventory items updated successfully!");
+        fetchItems(authToken, storeId);
+      } else {
+        Alert.alert("Upload Failure", result.msg || "Failed to process bulk sheets.");
+      }
+    } catch (err) {
+      // Check cancellation using the new library's properties
+      if (err.code === 'DOCUMENT_PICKER_CANCELED') {
+        console.log("User cancelled document selector dialog.");
+      } else {
+        Alert.alert("System Error", "An issue occurred processing the requested file.");
+      }
     }
   };
 
@@ -594,6 +642,7 @@ const WeightScreen = ({ route, navigation }) => {
           </View>
         </View>
 
+
         <View style={styles.actionRow}>
           <TouchableOpacity style={styles.actionBtnWrap} onPress={() => setShowUploadModal(true)}>
             <LinearGradient colors={["#2563eb", "#1e40af"]} style={styles.actionBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
@@ -634,6 +683,14 @@ const WeightScreen = ({ route, navigation }) => {
             </View>
           ))
         )}
+        
+        <TouchableOpacity style={styles.actionBtnWrap} onPress={handleExcelBulkUpload}>
+          <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.actionBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+            <Icon name="file-excel-outline" size={19} color="#fff" />
+            <Text style={styles.actionBtnText}>Bulk Upload Excel</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
         <View style={{ height: 20 }} />
       </ScrollView>
 

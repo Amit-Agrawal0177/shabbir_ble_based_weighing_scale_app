@@ -21,7 +21,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width } = Dimensions.get("window");
 
-const BASE_URL = "http://10.121.225.21:30119";
+const BASE_URL = "https://bt.weightify.vendtrails.com";
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 const api = {
