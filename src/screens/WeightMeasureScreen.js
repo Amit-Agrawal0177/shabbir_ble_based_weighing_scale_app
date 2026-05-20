@@ -272,6 +272,119 @@ const WeightScreen = ({ route, navigation }) => {
     }
   };
 
+  const getCurrentDate = () => {
+    const now = new Date();
+
+    const day = String(now.getDate()).padStart(2, "0");
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const year = now.getFullYear();
+
+    return `${day}-${month}-${year}`;
+  };
+
+  const formatPrintData = (records) => {
+    if (!records || records.length === 0) return "";
+
+    const WIDTH = 32;
+
+    // helper: fixed width text
+    const fix = (text, len) => {
+      return String(text || "")
+        .substring(0, len)
+        .padEnd(len, " ");
+    };
+
+    // helper: center text
+    const center = (text) => {
+      const space = Math.max(0, Math.floor((WIDTH - text.length) / 2));
+      return " ".repeat(space) + text + "\n";
+    };
+
+    // Sort by time (important)
+    const sorted = [...records].sort((a, b) => {
+      return new Date(`1970/01/01 ${a.time}`) - new Date(`1970/01/01 ${b.time}`);
+    });
+
+    const endTime = sorted[0]?.time || "--";
+    const startTime = sorted[sorted.length - 1]?.time || "--";
+    const device = sorted[0]?.device || "NA";
+
+    let output = "";
+
+    // Header
+    output += center("WEIGHT REPORT");
+    output += "-".repeat(WIDTH) + "\n";
+
+    output += `Date: ${getCurrentDate()}\n`;
+    // output += fix("Machine:", 12) + fix("1", 20) + "\n";
+    // output += fix("Device:", 12) + fix(device, 20) + "\n";
+    output += fix("Start:", 12) + fix(startTime, 20) + "\n";
+    output += fix("End:", 12) + fix(endTime, 20) + "\n";
+
+    output += fix("Vehicle No:", 12) + fix(vehicleNumber.trim().toUpperCase(), 20) + "\n";
+    output += fix("Scrap Dept:", 12) + fix(selectedScrapUser.user_name.trim(), 20) + "\n";
+
+    output += "-".repeat(WIDTH) + "\n";
+
+    // Column widths (total = 32)
+    // Sr(3) + Item(7) + Net(6) + Tare(6) + Gross(10) = 32
+    output +=
+      fix("Sr", 3) +
+      fix("Item", 7) +
+      fix("Net", 7) +
+      fix("Tare", 7) +
+      fix("Gross", 8) +
+      "\n";
+
+    output += "-".repeat(WIDTH) + "\n";
+
+    let totalWeight = 0;
+
+    sorted.forEach((r, index) => {
+      const sr = fix(index + 1, 3);
+      const item = fix(r.item, 7);
+      const netVal = parseFloat(r.netWeight || r.weight || 0);
+      const tareVal = r.tareWeight || "0";
+      const grossVal = r.grossWeight || r.weight || "0";
+
+      totalWeight += netVal;
+
+      const net = fix(netVal.toFixed(3), 7);
+      const tare = fix(tareVal, 7);
+      const gross = fix(grossVal, 8);
+
+      output += sr + item + net + tare + gross + "\n";
+    });
+
+    output += "-".repeat(WIDTH) + "\n";
+
+    output += fix("Items:", 12) + fix(records.length, 20) + "\n";
+    output += fix("Total Net:", 12) + fix(totalWeight.toFixed(3) + "kg", 20) + "\n";
+
+    output += "-".repeat(WIDTH) + "\n\n\n";
+
+    return output;
+  };
+
+  const printRecords = async () => {
+    try {
+      if (records.length === 0) {
+        Alert.alert("No Data", "No records to print.");
+        return;
+      }
+      if (!connected || !connectedDeviceRef.current) {
+        Alert.alert("Not Connected", "Please connect to BT-01 first.");
+        return;
+      }
+      let x = formatPrintData(records);
+      await connectedDeviceRef.current.write("\r\n" + x + "\r\n");
+      Alert.alert("Sent!", "Records transmitted to BT-01 successfully.");
+    } catch (error) {
+      console.log("Print/send error:", error);
+      Alert.alert("Error", "Failed to send data over Bluetooth.");
+    }
+  };
+
   // ── API: upload bill ──
   const handleUpload = async () => {
     if (!vehicleNumber.trim()) {
@@ -304,6 +417,7 @@ const WeightScreen = ({ route, navigation }) => {
       }).then((r) => r.json());
 
       if (res.statusCode === 0) {
+        await printRecords();
         await AsyncStorage.removeItem("records");
         setRecords([]);
         setVehicleNumber("");
@@ -428,6 +542,12 @@ const WeightScreen = ({ route, navigation }) => {
   const handleLogout = async () => {
     setShowLogoutModal(false);
     await cleanup();
+    try {
+      await AsyncStorage.clear();
+      console.log('All AsyncStorage data wiped successfully.');
+    } catch (error) {
+      console.error('Error clearing AsyncStorage:', error);
+    }
     navigation.replace("Login");
   };
 
