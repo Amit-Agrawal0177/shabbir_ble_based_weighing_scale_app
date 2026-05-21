@@ -282,7 +282,7 @@ const WeightScreen = ({ route, navigation }) => {
     return `${day}-${month}-${year}`;
   };
 
-  const formatPrintData = (records) => {
+  const formatPrintData = (records, bill_no) => {
     if (!records || records.length === 0) return "";
 
     const WIDTH = 32;
@@ -315,7 +315,8 @@ const WeightScreen = ({ route, navigation }) => {
     output += center("WEIGHT REPORT");
     output += "-".repeat(WIDTH) + "\n";
 
-    output += `Date: ${getCurrentDate()}\n`;
+    output += fix("Bill No.:", 12) + `${bill_no}\n`;
+    output += fix("Date: ", 12) + `${getCurrentDate()}\n`;
     // output += fix("Machine:", 12) + fix("1", 20) + "\n";
     // output += fix("Device:", 12) + fix(device, 20) + "\n";
     output += fix("Start:", 12) + fix(startTime, 20) + "\n";
@@ -366,7 +367,7 @@ const WeightScreen = ({ route, navigation }) => {
     return output;
   };
 
-  const printRecords = async () => {
+  const printRecords = async (bill_no) => {
     try {
       if (records.length === 0) {
         Alert.alert("No Data", "No records to print.");
@@ -376,7 +377,7 @@ const WeightScreen = ({ route, navigation }) => {
         Alert.alert("Not Connected", "Please connect to BT-01 first.");
         return;
       }
-      let x = formatPrintData(records);
+      let x = formatPrintData(records, bill_no);
       await connectedDeviceRef.current.write("\r\n" + x + "\r\n");
       Alert.alert("Sent!", "Records transmitted to BT-01 successfully.");
     } catch (error) {
@@ -401,6 +402,8 @@ const WeightScreen = ({ route, navigation }) => {
     }
     setUploading(true);
     try {
+      let bill_no = `${Date.now()}`;
+
       const res = await fetch(`${BASE_URL}/bill/insertBills`, {
         method: "POST",
         headers: {
@@ -409,6 +412,7 @@ const WeightScreen = ({ route, navigation }) => {
           Authorization: authToken,
         },
         body: JSON.stringify({
+          bill_number: bill_no,
           store_id: storeId,
           item_json: JSON.stringify(records),
           vehicle_number: vehicleNumber.trim(),
@@ -417,7 +421,7 @@ const WeightScreen = ({ route, navigation }) => {
       }).then((r) => r.json());
 
       if (res.statusCode === 0) {
-        await printRecords();
+        await printRecords(bill_no);
         await AsyncStorage.removeItem("records");
         setRecords([]);
         setVehicleNumber("");
@@ -803,14 +807,6 @@ const WeightScreen = ({ route, navigation }) => {
             </View>
           ))
         )}
-        
-        <TouchableOpacity style={styles.actionBtnWrap} onPress={handleExcelBulkUpload}>
-          <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.actionBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-            <Icon name="file-excel-outline" size={19} color="#fff" />
-            <Text style={styles.actionBtnText}>Bulk Upload Excel</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-
         <View style={{ height: 20 }} />
       </ScrollView>
 
@@ -818,55 +814,70 @@ const WeightScreen = ({ route, navigation }) => {
       <Modal visible={showAddItemModal} transparent animationType="slide" onRequestClose={() => setShowAddItemModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <View style={[styles.modalIconCircle, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0" }]}>
-              <Icon name="tag-plus-outline" size={28} color="#16a34a" />
-            </View>
-            <Text style={styles.modalTitle}>Add Item</Text>
-            <Text style={styles.modalSubtitle}>Enter the item details to add it to the list.</Text>
-            <View style={styles.modalDivider} />
-
-            <View style={styles.modalField}>
-              <Text style={styles.modalFieldLabel}>ITEM NAME</Text>
-              <View style={styles.modalInputWrap}>
-                <Icon name="package-variant-closed" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="e.g. Apple"
-                  placeholderTextColor="#cbd5e1"
-                  value={newItemName}
-                  onChangeText={setNewItemName}
-                />
+            {/* 1. Wrap the form elements in a ScrollView so it handles overflow gracefully */}
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContainer}>
+              
+              <View style={[styles.modalIconCircle, { backgroundColor: "#f0fdf4", borderColor: "#bbf7d0" }]}>
+                <Icon name="tag-plus-outline" size={28} color="#16a34a" />
               </View>
-            </View>
+              <Text style={styles.modalTitle}>Add Item</Text>
+              <Text style={styles.modalSubtitle}>Enter the item details to add it to the list.</Text>
+              <View style={styles.modalDivider} />
 
-            <View style={styles.modalField}>
-              <Text style={styles.modalFieldLabel}>ITEM CODE</Text>
-              <View style={styles.modalInputWrap}>
-                <Icon name="barcode" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="e.g. I001"
-                  placeholderTextColor="#cbd5e1"
-                  value={newItemCode}
-                  onChangeText={setNewItemCode}
-                  autoCapitalize="characters"
-                />
+              {/* --- Input Fields --- */}
+              <View style={styles.modalField}>
+                <Text style={styles.modalFieldLabel}>ITEM NAME</Text>
+                <View style={styles.modalInputWrap}>
+                  <Icon name="package-variant-closed" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="e.g. Apple"
+                    placeholderTextColor="#cbd5e1"
+                    value={newItemName}
+                    onChangeText={setNewItemName}
+                  />
+                </View>
               </View>
-            </View>
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity onPress={() => { setShowAddItemModal(false); setNewItemName(""); setNewItemCode(""); }} style={styles.cancelBtn}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleAddItem} disabled={addingItem} style={styles.confirmBtnWrap} activeOpacity={0.85}>
-                <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                  {addingItem ? <ActivityIndicator color="#fff" size="small" /> : <>
-                    <Icon name="check" size={16} color="#fff" />
-                    <Text style={styles.confirmBtnText}>Add Item</Text>
-                  </>}
+              <View style={styles.modalField}>
+                <Text style={styles.modalFieldLabel}>ITEM CODE</Text>
+                <View style={styles.modalInputWrap}>
+                  <Icon name="barcode" size={16} color="#94a3b8" style={{ marginLeft: 10 }} />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="e.g. I001"
+                    placeholderTextColor="#cbd5e1"
+                    value={newItemCode}
+                    onChangeText={setNewItemCode}
+                    autoCapitalize="characters"
+                  />
+                </View>
+              </View>
+
+              {/* --- Action Buttons --- */}
+              <View style={styles.modalActions}>
+                <TouchableOpacity onPress={() => { setShowAddItemModal(false); setNewItemName(""); setNewItemCode(""); }} style={styles.cancelBtn}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleAddItem} disabled={addingItem} style={styles.confirmBtnWrap} activeOpacity={0.85}>
+                  <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.confirmBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                    {addingItem ? <ActivityIndicator color="#fff" size="small" /> : <>
+                      <Icon name="check" size={16} color="#fff" />
+                      <Text style={styles.confirmBtnText}>Add Item</Text>
+                    </>}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+              
+              {/* --- Bulk Upload Button (Now safely in the vertical flow) --- */}
+              <TouchableOpacity style={[styles.actionBtnWrap, { marginTop: 15 }]} onPress={handleExcelBulkUpload}>
+                <LinearGradient colors={["#16a34a", "#15803d"]} style={styles.actionBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                  <Icon name="file-excel-outline" size={19} color="#fff" />
+                  <Text style={styles.actionBtnText}>Upload Excel</Text>
                 </LinearGradient>
               </TouchableOpacity>
-            </View>
+
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1099,7 +1110,7 @@ const styles = StyleSheet.create({
   recordCountText: { fontSize: 12, fontWeight: "700", color: "#2563eb" },
 
   actionRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
-  actionBtnWrap: { flex: 1, borderRadius: 14, overflow: "hidden" },
+  actionBtnWrap: { flex: 1, borderRadius: 14, overflow: "hidden", width: '100%' },
   actionBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 14 },
   actionBtnText: { color: "#fff", fontWeight: "bold", fontSize: 15 },
 
@@ -1120,6 +1131,7 @@ const styles = StyleSheet.create({
 
   // Modals
   modalOverlay: { flex: 1, backgroundColor: "rgba(15,23,42,0.45)", justifyContent: "center", alignItems: "center", paddingHorizontal: 24 },
+  scrollContainer: { alignItems: 'center', justifyContent: 'center'},
   modalCard: { backgroundColor: "#ffffff", borderRadius: 24, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22, width: "100%", alignItems: "center", shadowColor: "#0f172a", shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.18, shadowRadius: 32, elevation: 20 },
   modalIconCircle: { width: 68, height: 68, borderRadius: 34, backgroundColor: "#fff1f2", borderWidth: 1.5, borderColor: "#fecaca", justifyContent: "center", alignItems: "center", marginBottom: 16 },
   modalTitle: { fontSize: 20, fontWeight: "800", color: "#0f172a", marginBottom: 8, letterSpacing: -0.3 },
