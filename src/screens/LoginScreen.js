@@ -273,10 +273,7 @@ const SignUpScreen = ({ onSignUpSuccess, onBack }) => {
             <ActivityIndicator color="#fff" />
           ) : (
             <>
-              <Text style={styles.buttonText}>Create Account</Text>
-              <View style={styles.btnIconWrap}>
-                <Icon name="account-plus-outline" size={18} color="#fff" />
-              </View>
+              <Text style={styles.buttonText}>Submit</Text>
             </>
           )}
         </LinearGradient>
@@ -314,12 +311,12 @@ const CreateCompanyScreen = ({ onBack, onSuccess }) => {
       });
       if (res.statusCode === 0) {
         Alert.alert(
-          "Company Created!",
-          res.msg || "Your company has been registered successfully.",
+          "Store Created!",
+          res.msg || "Your store has been registered successfully.",
           [{ text: "OK", onPress: onSuccess }]
         );
       } else {
-        Alert.alert("Failed", res.msg || "Could not create company. Please try again.");
+        Alert.alert("Failed", res.msg || "Could not create store. Please try again.");
       }
     } catch {
       Alert.alert("Error", "Network error. Please try again.");
@@ -338,9 +335,9 @@ const CreateCompanyScreen = ({ onBack, onSuccess }) => {
       {/* Header */}
       <View style={styles.companyHeader}>
         <View style={styles.companyIconCircle}>
-          <Icon name="office-building-plus-outline" size={26} color="#2563eb" />
+          <Icon name="storefront-outline" size={26} color="#2563eb" />
         </View>
-        <Text style={styles.cardTitle}>Create Company</Text>
+        <Text style={styles.cardTitle}>Create Store</Text>
         <Text style={styles.cardSubtitle}>Register your business to get started</Text>
       </View>
 
@@ -365,7 +362,7 @@ const CreateCompanyScreen = ({ onBack, onSuccess }) => {
         icon="map-outline"
         value={address}
         onChangeText={setAddress}
-        placeholder="Enter company address"
+        placeholder="Enter store address"
         autoCapitalize="words"
       />
       <InputField
@@ -393,10 +390,7 @@ const CreateCompanyScreen = ({ onBack, onSuccess }) => {
             <ActivityIndicator color="#fff" />
           ) : (
             <>
-              <Text style={styles.buttonText}>Create Company</Text>
-              <View style={styles.btnIconWrap}>
-                <Icon name="office-building-check-outline" size={18} color="#fff" />
-              </View>
+              <Text style={styles.buttonText}>Submit</Text>
             </>
           )}
         </LinearGradient>
@@ -635,9 +629,9 @@ const LoginScreen = ({ navigation }) => {
                   onPress={() => setScreen("create_company")}
                   activeOpacity={0.8}
                 >
-                  <Icon name="office-building-plus-outline" size={18} color="#059669" />
+                  <Icon name="storefront-outline" size={18} color="#059669" />
                   <Text style={[styles.actionBtnText, { color: "#059669" }]}>
-                    New Company
+                    New Store
                   </Text>
                 </TouchableOpacity>
               </View>
